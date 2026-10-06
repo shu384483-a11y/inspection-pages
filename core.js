@@ -6,5 +6,6 @@ function state(issue){const ev=events(issue),last=ev.at(-1),inspection=[...ev].r
 function can(type,issue,role){const s=state(issue),editor=role==='admin'||role==='inspector';if(type==='inspect')return editor&&(!s.last||s.last.type==='inspect');if(type==='submit')return role==='branch'&&((!s.last&&!issue.info.sourcePeriod)||(s.last?.type==='inspect'&&s.last.result!=='整改到位')||s.last?.type==='return');return editor&&s.last?.type==='submit';}
 function carryInfo(issue,source,uid){return {description:issue.info.description,category:issue.info.category,kind:'未认定',score:0,sourcePeriod:source,createdBy:uid,createdAt:{'.sv':'timestamp'}};}
 function safeCell(v){return typeof v==='string'&&/^[=+@\-\t\r]/.test(v)?"'"+v:v;}
-const api={events,state,can,carryInfo,safeCell};root.Inspection=api;if(typeof module!=='undefined')module.exports=api;
+function displayCode(code){const value=String(code??'');return /^961[0-9]{3}$/.test(value)?value.slice(3):value;}
+const api={events,state,can,carryInfo,safeCell,displayCode};root.Inspection=api;if(typeof module!=='undefined')module.exports=api;
 })(typeof window==='undefined'?globalThis:window);
