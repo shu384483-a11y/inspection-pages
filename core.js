@@ -7,5 +7,6 @@ function can(type,issue,role){const s=state(issue),editor=role==='admin'||role==
 function carryInfo(issue,source,uid){return {description:issue.info.description,category:issue.info.category,kind:'未认定',score:0,sourcePeriod:source,createdBy:uid,createdAt:{'.sv':'timestamp'}};}
 function safeCell(v){return typeof v==='string'&&/^[=+@\-\t\r]/.test(v)?"'"+v:v;}
 function displayCode(code){const value=String(code??'');return /^961[0-9]{3}$/.test(value)?value.slice(3):value;}
-const api={events,state,can,carryInfo,safeCell,displayCode};root.Inspection=api;if(typeof module!=='undefined')module.exports=api;
+function loginEmail(account,domain){const value=String(account??'').trim();if(/^\d{3}$/.test(value)){if(!/^[a-z0-9.-]+\.invalid$/.test(domain))throw Error('网点账号尚未配置，请联系管理员。');return `branch-${value}@${domain}`;}if(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))return value;throw Error('请输入网点三位账号或管理员邮箱。');}
+const api={events,state,can,carryInfo,safeCell,displayCode,loginEmail};root.Inspection=api;if(typeof module!=='undefined')module.exports=api;
 })(typeof window==='undefined'?globalThis:window);
