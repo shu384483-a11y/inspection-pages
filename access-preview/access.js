@@ -8,6 +8,41 @@
     return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))));
   }
 
+  async function passwordSecret(username, password) {
+    const account = String(username || '').trim().toLowerCase();
+    if (!/^[a-z0-9_-]{2,40}$/.test(account) || typeof password !== 'string' || !password || password.length > 128) throw Error('请填写有效的检查员账号和密码。');
+    const encoder = new TextEncoder();
+    const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({name: 'PBKDF2', hash: 'SHA-256', salt: encoder.encode('inspection-access-v2:' + account), iterations: 600000}, material, 256);
+    return hex(new Uint8Array(bits));
+  }
+
+  async function enterPassword(databaseURL, username, password) {
+    const account = String(username || '').trim().toLowerCase();
+    const secret = await passwordSecret(account, password);
+    try {
+      return await enter(databaseURL, 'staff', secret, account);
+    } catch (error) {
+      if (error.message.startsWith('入口无效')) throw Error('检查员账号或密码不正确，或入口已停用。');
+      throw error;
+    }
+  }
+
+  async function enterBranchCode(databaseURL, code) {
+    if (typeof code !== 'string' || !/^\d{6}$/.test(code)) throw Error('请输入完整的六位机构号，例如 961010。');
+    let entry;
+    try {
+      entry = await request(databaseURL, namespace + '/branchEntries/' + code);
+    } catch (error) {
+      if (error.message.startsWith('入口无效')) throw Error('该机构号未配置或已停用，请核对后重试。');
+      throw error;
+    }
+    if (!validKey(entry?.space)) throw Error('该机构号未配置，请核对后重试。');
+    const session = await enter(databaseURL, 'branch', entry.space, '');
+    if (session.branch !== code) throw Error('机构号与网点信息不一致，请联系管理员核对。');
+    return session;
+  }
+
   function proof(session) {
     if (!session || !validKey(session.key) || !validKey(session.secret)) throw Error('请先进入检查或整改入口。');
     return {kind: session.kind, key: session.key, actor: session.actor, value: session.secret + '.' + hex(crypto.getRandomValues(new Uint8Array(16)))};
@@ -82,5 +117,5 @@
     return {kind, key, secret, actor: 'inspector:' + name.trim(), branches: catalog.branches, spaces: catalog.spaces};
   }
 
-  root.InspectionAccess = {digest, proof, route, request, enter, validKey};
+  root.InspectionAccess = {digest, proof, route, request, enter, validKey, passwordSecret, enterPassword, enterBranchCode};
 })(globalThis);
