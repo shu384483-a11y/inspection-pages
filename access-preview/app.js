@@ -28,21 +28,29 @@ function logout(){
   $('#login').hidden=false;
   $('#login').reset();
   updateEntry();
-  msg('已退出，页面中的资料和进入码已清除。');
+  msg('已退出，页面中的资料和密码已清除。');
 }
 function updateEntry(){
   const branch=$('#accessKind').value==='branch';
   $('#nameLabel').hidden=branch;
   $('#operatorName').required=!branch;
-  $('#entryHelp').textContent=branch?'请使用本网点专属链接或整改码；链接仅交给本网点经办人员。':'填写姓名和检查组进入码。姓名用于记录经办人，无需注册个人账号。';
+  $('#codeLabel').textContent=branch?'机构号':'密码';
+  $('#accessCode').type=branch?'text':'password';
+  $('#accessCode').inputMode=branch?'numeric':'text';
+  $('#accessCode').autocomplete=branch?'off':'current-password';
+  $('#accessCode').placeholder=branch?'例如：961010':'';
+  $('#entryHelp').textContent=branch?'输入六位机构号进入对应网点，进入后请核对网点名称。机构号仅用于选择网点，不核验人员身份。':'填写检查员账号和密码。此账号由检查组共用，请勿向网点提供。';
 }
-$('#accessKind').onchange=updateEntry;
+$('#accessKind').onchange=()=>{$('#accessCode').value='';updateEntry();};
 const entryFragment=new URLSearchParams(location.hash.slice(1));
+const entryQuery=new URLSearchParams(location.search);
+if(entryQuery.get('mode')==='rectify')$('#accessKind').value='branch';
+if(/^\d{6}$/.test(entryQuery.get('branch')||''))$('#accessCode').value=entryQuery.get('branch');
 if(entryFragment.has('branch')){
   $('#accessKind').value='branch';
   $('#accessCode').value=entryFragment.get('branch');
 }else if(entryFragment.has('staff')){
-  $('#accessCode').value=entryFragment.get('staff');
+  msg('原检查进入码已停用，请填写检查员账号和密码。');
 }
 if(location.hash)history.replaceState(null,'',location.pathname+location.search);
 updateEntry();
@@ -51,7 +59,8 @@ $('#login').addEventListener('submit',event=>{
   run(async()=>{
     const kind=$('#accessKind').value;
     msg('正在连接云端并核对入口权限…');
-    const candidate=await Access.enter(C.databaseURL,kind,$('#accessCode').value.trim(),$('#operatorName').value);
+    const code=$('#accessCode').value;
+    const candidate=kind==='staff'?await Access.enterPassword(C.databaseURL,$('#operatorName').value,code):(Access.validKey(code.trim())?await Access.enter(C.databaseURL,'branch',code.trim(),''):await Access.enterBranchCode(C.databaseURL,code.trim()));
     accessSession=candidate;
     S.uid=candidate.actor;
     S.profile=kind==='staff'?{role:'admin',active:true}:{role:'branch',active:true,branch:candidate.branch};
@@ -79,6 +88,15 @@ $('#login').addEventListener('submit',event=>{
 });
 if(entryFragment.has('branch'))$('#login').requestSubmit();
 
+function renderQR(){
+  if(!editor())return;
+  const url=new URL(location.href);url.search='';url.hash='';url.searchParams.set('mode','rectify');
+  const qr=qrcode(0,'M');qr.addData(url.href);qr.make();
+  $('#content').innerHTML='<div class="qr-wrap"><h3>统一网点整改入口</h3><p class="muted">所有网点使用同一个二维码。扫码后输入六位机构号，并核对显示的网点名称。二维码不含检查员密码。</p><div class="qr-grid"><div class="qr-item" id="unifiedQR"></div></div><button class="btn btn-outline no-print" data-action="print">打印二维码</button></div>';
+  $('#unifiedQR').innerHTML=qr.createImgTag(6,16)+'<div class="qn">扫码后输入本网点机构号</div>';
+  const link=document.createElement('a');link.href=url.href;link.textContent='打开 / 复制统一入口';$('#unifiedQR').append(link);
+}
+
 $('#logout').onclick=logout;$('#refresh').onclick=()=>run(load);
 $('#period').onchange=()=>run(async()=>{S.period=$('#period').value;await load();});$('#branch').onchange=()=>run(async()=>{S.branch=$('#branch').value;await load();});
 $('#nav').onclick=e=>{const b=e.target.closest('[data-tab]');if(b&&!S.busy){S.tab=b.dataset.tab;render();}};
@@ -95,7 +113,7 @@ function clean(v){v=String(v||'').trim();if(!v||v.length>3000||v.includes('农�
 function scoreInput(){return '<label>处理方式<select name="kind"><option>提醒</option><option>扣分</option></select></label><label>本季扣分（扣分填负数）<input name="score" type="number" min="-100" max="0" step="0.5" value="0"></label>';}
 function scoreValue(d){const kind=d.get('kind'),score=kind==='扣分'?Number(d.get('score')):0;if(!Number.isFinite(score)||score>0||score< -100)throw Error('扣分应在-100至0之间');return {kind,score};}
 function eventForm(id,type){const r=S.records[id],s=W.state(r);$('#content').innerHTML=`<form class="new-form" id="eventForm"><h3>${esc({inspect:'记录现场复查',submit:'提交整改，等待复核',review:'复核整改'}[type])}</h3><p class="text">${esc(r.info.description)}</p>${type==='inspect'?'<label>现场结果<select name="result"><option>整改到位</option><option>仍存在</option><option>持续未整改</option><option>整改后反弹</option></select></label>'+scoreInput():''}${type==='review'?'<label>审核结论<select name="decision"><option value="approve">复核通过</option><option value="return">退回补充</option></select></label>':''}<label>说明${type==='inspect'?'（认定反弹须说明上次整改依据）':''}<textarea name="note" maxlength="3000" required></textarea></label>${type!=='review'?photoInput():''}<button class="btn btn-primary">确认提交</button><button type="button" class="btn btn-gray" data-action="back">返回</button></form>`;$('#eventForm').onsubmit=e=>{e.preventDefault();run(async()=>{const f=e.target,d=new FormData(f),event={type:type==='review'?d.get('decision'):type,by:S.uid,at:stamp(),note:clean(d.get('note'))};if(type==='inspect'){Object.assign(event,scoreValue(d),{result:d.get('result')});if(event.result==='整改到位')event.score=0;}if(type!=='review'){const ps=await photos(f);if(ps.length)event.photos=ps;}await db(`v2/issues/${S.period}/${S.branch}/${id}`,'PATCH',{head:s.count+1,['events/e'+(s.count+1)]:event});await load();msg('已保存。整改提交需由检查人员复核后才算通过。');});};}
-function renderQR(){if(!editor())return;$('#content').innerHTML='<div class="qr-wrap"><h3>网点专属整改入口</h3><p class="muted">二维码包含本网点整改权限，请只发给对应网点。季度切换后请重新生成。</p><div class="qr-grid" id="qrgrid"></div><button class="btn btn-outline no-print" data-action="print">打印二维码</button></div>';for(const [b,v]of Object.entries(S.branches)){const u=new URL(location.href);u.search='';u.hash='';u.searchParams.set('branch',b);u.searchParams.set('period',S.period);u.searchParams.set('mode','rectify');u.hash='branch='+accessSession.spaces[b];const q=qrcode(0,'M');q.addData(u.href);q.make();const div=document.createElement('div');div.className='qr-item';div.innerHTML=q.createImgTag(4,12)+`<div class="qn">${W.displayCode(b)} ${esc(v.name)}</div>`;const link=document.createElement('a');link.href=u.href;link.textContent='打开 / 复制入口';div.append(link);$('#qrgrid').append(div);}}
+
 function renderSummary(){const rows=Object.values(S.records).filter(r=>r.info),sum=rows.reduce((a,r)=>a+W.state(r).score,0);$('#content').innerHTML=`<div class="new-form"><h3>${S.period} · ${W.displayCode(S.branch)} ${esc(S.branches[S.branch].name)}</h3><p>问题${rows.length}条，本季合计${sum}分</p><p class="muted">网点查收：${Object.keys(S.receipts||{}).length?'已确认查收':'未确认'}（不代表整改通过）</p><div class="tools no-print"><button data-action="excel">本网点Excel</button><button data-action="report">本网点照片报告</button>${editor()?'<button data-action="overview">查看全部网点进度</button><button data-action="allExcel">授权网点汇总Excel</button>':''}${S.profile.role==='admin'?`<button data-action="backup">下载本季业务备份</button><button data-action="import">导入本季明细</button><button data-action="carryAll">批量生成上季扣分回头看</button><button data-action="lock">${locked()?'解除本季锁定':'锁定本季'}</button><button data-action="period">新建季度</button>`:''}</div><p class="muted">导入只写入当前未锁定季度；历史资料未提供整改结果的，不自动标为通过。</p></div>${cards()}`;}
 function download(blob,name){const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}
 function excel(data){const rows=[['季度','网点代号','网点简称','问题编号','问题类别','问题描述','来源季度','当前状态','本季扣分','最后说明']];for(const [b,records]of Object.entries(data))for(const[id,r]of Object.entries(records||{})){if(!r.info)continue;const s=W.state(r);rows.push([S.period,b,S.branches[b].name,id,r.info.category,r.info.description,r.info.sourcePeriod,s.status,s.score,s.last?.note||''].map(W.safeCell));}const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet(rows),'检查整改明细');XLSX.writeFile(book,`检查整改_${S.period}.xlsx`);}
